@@ -119,10 +119,15 @@ namespace Alchemy.Editor
                     VisualElement element = null;
                     var property = findPropertyFunc(member.Name);
                     var isManagedReferenceProperty = property?.propertyType == SerializedPropertyType.ManagedReference;
+                    var drawerType = member switch
+                    {
+                        FieldInfo fieldInfo => InternalAPIHelper.GetDrawerTypeForType(fieldInfo.FieldType, isManagedReferenceProperty),
+                        PropertyInfo propertyInfo => InternalAPIHelper.GetDrawerTypeForType(propertyInfo.PropertyType, isManagedReferenceProperty),
+                        _ => null
+                    };
 
-                    // Add default PropertyField if the property has a custom PropertyDrawer
-                    if ((member is FieldInfo fieldInfo && InternalAPIHelper.GetDrawerTypeForType(fieldInfo.FieldType, isManagedReferenceProperty) != null) ||
-                        (member is PropertyInfo propertyInfo && InternalAPIHelper.GetDrawerTypeForType(propertyInfo.PropertyType, isManagedReferenceProperty) != null))
+                    // Add default PropertyField if the property has a custom PropertyDrawer, except for IMGUI drawers overriding OnGUI
+                    if (drawerType != null && ReflectionHelper.GetMembers(drawerType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).All(x => x.Name != nameof(PropertyDrawer.OnGUI)))
                     {
                         if (property != null)
                         {
