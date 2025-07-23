@@ -24,6 +24,18 @@ namespace Alchemy.Editor
         public static float CalculateLabelWidth(VisualElement element, VisualElement root)
         {
             // This code is a partial modification of the Label width calculation method actually used inside PropertyField.
+#if UNITY_2022_3_OR_NEWER
+            var num = root.resolvedStyle.paddingLeft;
+            var num2 = 40f;
+            var num3 = 120f;
+            var num4 = element.GetFirstAncestorOfType<Foldout>() == null ? 0f : 15f;
+
+            var width = root.resolvedStyle.width;
+            var a = width * 0.45f - num2 - num - num4;
+            var b = Mathf.Max(num3 - num - num4, 0f);
+
+            return Mathf.Max(a, b);
+#else 
             var num = root.resolvedStyle.paddingLeft;
             var num2 = 37f;
             var num3 = 123f;
@@ -34,6 +46,7 @@ namespace Alchemy.Editor
             var b = Mathf.Max(num3 - num - num4, 0f);
 
             return Mathf.Max(a, b) + 12f;
+#endif
         }
 
         public static ListView CreateDefaultListView(string label)
