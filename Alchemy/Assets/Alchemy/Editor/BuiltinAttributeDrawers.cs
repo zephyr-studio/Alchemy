@@ -101,16 +101,10 @@ namespace Alchemy.Editor.Drawers
                     alchemyPropertyField.Label = labelTextAttribute.Text;
                     break;
                 case MethodButton methodButton:
-                    methodButton.SetLableText(labelTextAttribute.Text);
+                    methodButton.SetLabelText(labelTextAttribute.Text);
                     break;
                 case Button button:
                     button.text = labelTextAttribute.Text;
-                    break;
-                case MethodButton methodButton:
-                    if (methodButton.Q<Foldout>() is { } foldout)
-                        foldout.text = labelTextAttribute.Text;
-                    else if (methodButton.Q<Button>() is { } button)
-                        button.text = labelTextAttribute.Text;
                     break;
                 default:
                     var labelElement = TargetElement.Q<Label>();
