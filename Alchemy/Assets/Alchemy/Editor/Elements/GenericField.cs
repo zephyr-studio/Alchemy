@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine;
@@ -17,6 +18,13 @@ namespace Alchemy.Editor.Elements
 
         public GenericField(object obj, Type type, string label,bool isDelayed = false)
         {
+            Build(obj, type, label, isDelayed);
+            GUIHelper.ScheduleAdjustLabelWidth(this);
+        }
+        
+        public GenericField(object obj, Type type, MemberInfo memberInfo, string label, bool isDelayed = false)
+        {
+            this.memberInfo = memberInfo;
             Build(obj, type, label, isDelayed);
             GUIHelper.ScheduleAdjustLabelWidth(this);
         }
@@ -151,7 +159,28 @@ namespace Alchemy.Editor.Elements
             }
             else if (type == typeof(string))
             {
-                AddField(new TextField(label), (string)obj);
+                var field = new TextField(label);
+                if (memberInfo != null)
+                {
+                    if (memberInfo.TryGetCustomAttribute<TextAreaAttribute>(out var textArea))
+                    {
+                        field.multiline = true;
+                        field.style.flexDirection = FlexDirection.Column;
+                        field.style.whiteSpace = WhiteSpace.Normal;
+                        field.style.minHeight = (textArea.minLines + 1) * EditorGUIUtility.singleLineHeight;
+                        field.style.maxHeight = (textArea.maxLines + 1) * EditorGUIUtility.singleLineHeight;
+                        field.verticalScrollerVisibility = ScrollerVisibility.Auto;
+                    }
+                    else if (memberInfo.TryGetCustomAttribute<MultilineAttribute>(out var multiLine))
+                    {
+                        field.multiline = true;
+                        field.style.height = EditorGUIUtility.singleLineHeight + (multiLine.lines - 1) * 13f;
+                        field.verticalScrollerVisibility = ScrollerVisibility.Auto;
+                        field.Q("unity-dragger").style.opacity = 0f;
+                        field.AddToClassList(TextField.alignedFieldUssClassName);
+                    }
+                }
+                AddField(field, (string)obj);
             }
             else if (type == typeof(char))
             {
@@ -255,6 +284,7 @@ namespace Alchemy.Editor.Elements
         public event Action<object> OnValueChanged;
         bool isDelayed;
         bool changed;
+        MemberInfo memberInfo;
 
         void AddField<T>(BaseField<T> control, T value)
         {
@@ -275,6 +305,16 @@ namespace Alchemy.Editor.Elements
             {
                 control.RegisterValueChangedCallback(x => OnValueChanged?.Invoke(x.newValue));
             }
+            
+            if (memberInfo != null)
+            {
+                if (memberInfo.TryGetCustomAttribute<HeaderAttribute>(out var header)) 
+                    Add(new Label(header.header));
+    
+                if (memberInfo.TryGetCustomAttribute<TooltipAttribute>(out var tooltip)) 
+                    this.tooltip = tooltip.tooltip;
+            }
+            
             Add(control);
         }
     }
