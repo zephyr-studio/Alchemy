@@ -100,6 +100,9 @@ namespace Alchemy.Editor.Drawers
                 case AlchemyPropertyField alchemyPropertyField:
                     alchemyPropertyField.Label = labelTextAttribute.Text;
                     break;
+                case MethodButton methodButton:
+                    methodButton.SetLableText(labelTextAttribute.Text);
+                    break;
                 case Button button:
                     button.text = labelTextAttribute.Text;
                     break;
@@ -249,23 +252,24 @@ namespace Alchemy.Editor.Drawers
     public sealed class PreviewDrawer : TrackSerializedObjectAttributeDrawer
     {
         private Image image;
-        private const float PreviewSize = 40f;
         private const float BorderWidth = 1f;
         private static readonly Color borderColor = new Color(0f, 0f, 0f, 0.3f);
 
         public override void OnCreateElement()
         {
-            if (SerializedProperty.propertyType != SerializedPropertyType.ObjectReference) return;
+            if (SerializedProperty == null || SerializedProperty.propertyType != SerializedPropertyType.ObjectReference) return;
+
+            var att = (PreviewAttribute)Attribute;
 
             image = new Image
             {
                 scaleMode = ScaleMode.ScaleToFit,
                 style = {
-                    width = PreviewSize,
-                    height = PreviewSize,
+                    width = att.Size,
+                    height = att.Size,
                     marginTop = EditorGUIUtility.standardVerticalSpacing,
                     marginBottom = EditorGUIUtility.standardVerticalSpacing * 4f,
-                    alignSelf = Align.FlexEnd,
+                    alignSelf = att.AlignStyle,
                     borderTopWidth = BorderWidth,
                     borderBottomWidth = BorderWidth,
                     borderLeftWidth = BorderWidth,

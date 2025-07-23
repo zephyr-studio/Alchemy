@@ -147,6 +147,7 @@ namespace Alchemy.Editor
             propertyField.RegisterValueChangeCallback(x =>
             {
                 var objectField = propertyField.Q<ObjectField>();
+                if (objectField == null) return;
                 objectField.objectType = type;
                 objectField.allowSceneObjects = !isAssetsOnly;
             });
