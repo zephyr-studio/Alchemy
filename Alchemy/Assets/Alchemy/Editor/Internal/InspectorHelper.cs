@@ -216,7 +216,7 @@ namespace Alchemy.Editor
                 case FieldInfo:
                 case PropertyInfo:
                     var isSerializedMember = false;
-                    if (memberInfo is FieldInfo f) isSerializedMember = f.IsPublic | f.HasCustomAttribute<SerializeField>();
+                    if (memberInfo is FieldInfo f) isSerializedMember = f.IsPublic | f.HasCustomAttribute<SerializeField>() | f.HasCustomAttribute<SerializeReference>();
                     else if (memberInfo is PropertyInfo p) isSerializedMember = p.HasCustomAttribute<SerializeField>();
 
                     if (isSerializedMember)
