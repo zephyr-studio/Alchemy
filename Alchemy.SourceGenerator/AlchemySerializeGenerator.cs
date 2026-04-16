@@ -76,6 +76,33 @@ namespace Alchemy.SourceGenerator
                         }
                     }
 
+                    var properties = typeSyntax.Members.OfType<PropertyDeclarationSyntax>();
+                    foreach (var prop in properties)
+                    {
+                        var model = context.Compilation.GetSemanticModel(prop.SyntaxTree);
+                        var propSymbol = model.GetDeclaredSymbol(prop) as IPropertySymbol;
+
+                        var backingField = propSymbol.ContainingType
+                            .GetMembers()
+                            .OfType<IFieldSymbol>()
+                            .FirstOrDefault(f => f.Name == $"<{propSymbol.Name}>k__BackingField");
+
+                        if (backingField != null)
+                        {
+                            var alchemySerializeAttribute = backingField.GetAttributes()
+                                .FirstOrDefault(x =>
+                                    x.AttributeClass.Name is "AlchemySerializeField"
+                                        or "AlchemySerializeFieldAttribute"
+                                        or "Alchemy.Serialization.AlchemySerializeField"
+                                        or "Alchemy.Serialization.AlchemySerializeFieldAttribute");
+
+                            if (alchemySerializeAttribute != null)
+                            {
+                                fieldSymbols.Add(backingField);
+                            }
+                        }
+                    }
+
                     var sourceText = ProcessClass((INamedTypeSymbol)typeSymbol, fieldSymbols);
                     var fullType = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
                         .Replace("global::", "")
@@ -173,11 +200,12 @@ namespace Alchemy.SourceGenerator
 
             foreach (var field in fieldSymbols)
             {
+                var fieldName = field.Name.EndsWith(">k__BackingField") ? field.Name.Substring(1, field.Name.IndexOf('>') - 1) : field.Name;
                 var serializeCode =
                     @$"try
 {{
-    {alchemySerializationDataName}.{field.Name}.data = global::Alchemy.Serialization.Internal.SerializationHelper.ToJson(this.{field.Name} , {alchemySerializationDataName}.UnityObjectReferences);
-    {alchemySerializationDataName}.{field.Name}.isCreated = true;
+    {alchemySerializationDataName}.{fieldName}.data = global::Alchemy.Serialization.Internal.SerializationHelper.ToJson(this.{fieldName} , {alchemySerializationDataName}.UnityObjectReferences);
+    {alchemySerializationDataName}.{fieldName}.isCreated = true;
 }}
 catch (global::System.Exception ex)
 {{
@@ -187,9 +215,9 @@ catch (global::System.Exception ex)
                 var deserializeCode =
                     @$"try 
 {{
-    if ({alchemySerializationDataName}.{field.Name}.isCreated)
+    if ({alchemySerializationDataName}.{fieldName}.isCreated)
     {{
-        this.{field.Name} = global::Alchemy.Serialization.Internal.SerializationHelper.FromJson<{field.Type.ToDisplayString()}>({alchemySerializationDataName}.{field.Name}.data, {alchemySerializationDataName}.UnityObjectReferences);
+        this.{fieldName} = global::Alchemy.Serialization.Internal.SerializationHelper.FromJson<{field.Type.ToDisplayString()}>({alchemySerializationDataName}.{fieldName}.data, {alchemySerializationDataName}.UnityObjectReferences);
     }}
 }}
 catch (global::System.Exception ex)
@@ -200,7 +228,7 @@ catch (global::System.Exception ex)
                 onBeforeSerializeCodeBuilder.AppendLine(serializeCode);
                 onAfterDeserializeCodeBuilder.AppendLine(deserializeCode);
 
-                serializationDataCodeBuilder.Append("public Item ").Append(field.Name).Append(" = new();");
+                serializationDataCodeBuilder.Append("public Item ").Append(fieldName).Append(" = new();");
             }
 
             return
