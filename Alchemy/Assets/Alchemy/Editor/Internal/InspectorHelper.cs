@@ -251,9 +251,10 @@ namespace Alchemy.Editor
                                 declaredType = declaredType.GetGenericTypeDefinition();
                             }
                             var dataName ="__alchemySerializationData_"+ declaredType.FullName.Replace("`","").Replace(".", "_") ;
-                            
+                            var memberName = memberInfo.Name.EndsWith(">k__BackingField") ? memberInfo.Name[1..^16] : memberInfo.Name;
+
                             SerializedProperty GetProperty() => findPropertyFunc?.Invoke(dataName)
-                                .FindPropertyRelative(memberInfo.Name);
+                                .FindPropertyRelative(memberName);
 
                             var p = GetProperty();
                             if (p != null)
