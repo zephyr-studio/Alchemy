@@ -1,11 +1,11 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Reflection;
 using System.Linq;
+using System.Reflection;
 using System.Text.RegularExpressions;
-using UnityEngine;
 using UnityEditor;
+using UnityEngine;
 
 namespace Alchemy.Editor
 {
@@ -90,7 +90,7 @@ namespace Alchemy.Editor
                     var index = int.Parse(IndexerRegex.Replace(splits[i], string.Empty));
                     var targetType = target.GetType();
 
-                    if (targetType.IsArray)target = (target as Array).GetValue(index);
+                    if (targetType.IsArray) target = (target as Array).GetValue(index);
                     else target = (target as IList)[index];
 
                     i++;
@@ -136,7 +136,7 @@ namespace Alchemy.Editor
             return typeName[(splitIndex + 1)..];
         }
 
-       public static Type GetManagedReferenceFieldType(this SerializedProperty property)
+        public static Type GetManagedReferenceFieldType(this SerializedProperty property)
         {
             var typeName = property.managedReferenceFieldTypename;
             var splitIndex = typeName.IndexOf(' ');
@@ -179,26 +179,21 @@ namespace Alchemy.Editor
 
         static object GetElementAtOrDefault(object arrayOrListObj, int index)
         {
+            if (arrayOrListObj is IList valueList && index >= 0 && index < valueList.Count)
+            {
+                return valueList[index];
+            }
+
             if (arrayOrListObj is IEnumerable<object> referenceEnumerable)
             {
                 return referenceEnumerable.ElementAtOrDefault(index);
             }
 
-            if (arrayOrListObj is IList valueList)
+            if (arrayOrListObj is IList fallbackList)
             {
-                object result;
-                if (index < 0 || index >= valueList.Count)
-                {
-                    Type listType = valueList.GetType();
-                    Type elementType = listType.IsArray ? listType.GetElementType() : listType.GetGenericArguments()[0];
-                    result = Activator.CreateInstance(elementType);
-                }
-                else
-                {
-                    result = valueList[index];
-                }
-
-                return result;
+                Type listType = fallbackList.GetType();
+                Type elementType = listType.IsArray ? listType.GetElementType() : listType.GetGenericArguments()[0];
+                return Activator.CreateInstance(elementType);
             }
 
             throw new ArgumentException($"Can't parse {arrayOrListObj.GetType()} as Array or List");

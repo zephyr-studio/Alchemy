@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using UnityEngine;
-using UnityEngine.UIElements;
+using Alchemy.Editor.Elements;
+using Alchemy.Inspector;
 using UnityEditor;
 using UnityEditor.UIElements;
-using Alchemy.Inspector;
-using Alchemy.Editor.Elements;
+using UnityEngine;
+using UnityEngine.UIElements;
 
 namespace Alchemy.Editor.Drawers
 {
@@ -91,7 +91,7 @@ namespace Alchemy.Editor.Drawers
                     paddingLeft = 3f,
                 }
             };
-            rootElement.Remove(rootElement.Q<Label>());
+            rootElement.Q<Label>()?.RemoveFromHierarchy();
 
             var tabGUIElement = new IMGUIContainer(() =>
             {

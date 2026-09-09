@@ -1,11 +1,11 @@
 using System;
 using System.Reflection;
+using Alchemy.Inspector;
 using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine;
-using UnityEngine.UIElements;
 using UnityEngine.Assertions;
-using Alchemy.Inspector;
+using UnityEngine.UIElements;
 
 namespace Alchemy.Editor
 {
@@ -101,14 +101,14 @@ namespace Alchemy.Editor
                     if (events.OnItemsChosen == null) return;
                     ReflectionHelper.Invoke(target, events.OnItemsChosen, new object[] { items });
                 };
-#else 
+#else
                  listView.onItemsChosen += items =>
                 {
                     if (events.OnItemsChosen == null) return;
                     ReflectionHelper.Invoke(target, events.OnItemsChosen, new object[] { items });
                 };
 #endif
-                
+
                 listView.itemIndexChanged += (before, after) =>
                 {
                     if (events.OnItemIndexChanged == null) return;
@@ -123,7 +123,7 @@ namespace Alchemy.Editor
 
                 listView.selectedIndicesChanged += indices =>
                 {
-                    if (events.OnSelectedIndicesChanged== null) return;
+                    if (events.OnSelectedIndicesChanged == null) return;
                     ReflectionHelper.Invoke(target, events.OnSelectedIndicesChanged, new object[] { indices });
                 };
 #else
@@ -170,6 +170,9 @@ namespace Alchemy.Editor
 
         public static void ScheduleAdjustLabelWidth(VisualElement element)
         {
+            EventCallback<GeometryChangedEvent> onGeometryChanged = null;
+            VisualElement registeredTree = null;
+
             void Adjust(VisualElement visualElement)
             {
                 var label = element.Q<Label>();
@@ -178,13 +181,37 @@ namespace Alchemy.Editor
                 label.style.width = CalculateLabelWidth(element, visualElement);
             }
 
-            // Adjust label width
-            element.schedule.Execute(() =>
+            void Unregister()
             {
-                var visualTree = element.panel.visualTree;
-                visualTree.RegisterCallback<GeometryChangedEvent>(x => Adjust(visualTree));
+                if (registeredTree != null && onGeometryChanged != null)
+                {
+                    registeredTree.UnregisterCallback(onGeometryChanged);
+                }
+
+                registeredTree = null;
+                onGeometryChanged = null;
+            }
+
+            void Register(IPanel panel)
+            {
+                var visualTree = panel?.visualTree;
+                if (visualTree == null) return;
+                if (registeredTree == visualTree) return;
+
+                Unregister();
+                registeredTree = visualTree;
+                onGeometryChanged = _ => Adjust(visualTree);
+                visualTree.RegisterCallback(onGeometryChanged);
                 Adjust(visualTree);
-            });
+            }
+
+            element.RegisterCallback<AttachToPanelEvent>(evt => Register(evt.destinationPanel));
+            element.RegisterCallback<DetachFromPanelEvent>(_ => Unregister());
+
+            if (element.panel != null)
+            {
+                Register(element.panel);
+            }
         }
 
         public static IMGUIContainer CreateLine(Color color, float height)

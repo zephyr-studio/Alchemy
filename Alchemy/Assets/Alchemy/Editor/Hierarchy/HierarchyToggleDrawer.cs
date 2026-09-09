@@ -1,15 +1,23 @@
 using System.Linq;
+using Alchemy.Hierarchy;
 using UnityEditor;
 using UnityEngine;
-using Alchemy.Hierarchy;
 
 namespace Alchemy.Editor
 {
     public sealed class HierarchyToggleDrawer : HierarchyDrawer
     {
+#if UNITY_6000_4_OR_NEWER
+        public override void OnGUI(EntityId instanceID, Rect selectionRect)
+#else
         public override void OnGUI(int instanceID, Rect selectionRect)
+#endif
         {
+#if UNITY_6000_4_OR_NEWER
+            var gameObject = EditorUtility.EntityIdToObject(instanceID) as GameObject;
+#else
             var gameObject = EditorUtility.InstanceIDToObject(instanceID) as GameObject;
+#endif
             if (gameObject == null) return;
             if (gameObject.TryGetComponent<HierarchyObject>(out _)) return;
 

@@ -27,11 +27,24 @@ namespace Alchemy.Editor
             readonly string name;
             readonly AlchemyGroupDrawer drawer;
 
-            readonly List<MemberInfo> members = new();
+            readonly List<(MemberInfo Member, int DeclaredAt)> members = new();
             readonly List<GroupNode> children = new();
 
+            bool hasDefinedOrder;
+
             public string Name => name;
-            public IEnumerable<MemberInfo> Members => members;
+            /// <summary>
+            /// Sibling drawing order. Defaults to 0 when no attribute specifies Order (same as members).
+            /// Shares the same scale as <see cref="OrderAttribute"/> on ungrouped members.
+            /// </summary>
+            public int Order { get; private set; }
+            /// <summary>
+            /// Declaration ordinal of the first member that created this group (for stable ties).
+            /// </summary>
+            public int DeclaredAt { get; private set; } = int.MaxValue;
+            public IEnumerable<MemberInfo> Members => members.Select(x => x.Member);
+            public IEnumerable<(MemberInfo Member, int DeclaredAt)> MemberEntries => members;
+            public IReadOnlyList<GroupNode> Children => children;
             public AlchemyGroupDrawer Drawer => drawer;
             public VisualElement VisualElement { get; set; }
             public GroupNode Parent { get; private set; }
@@ -47,132 +60,258 @@ namespace Alchemy.Editor
                 node.Parent = this;
             }
 
-            public void AddMember(MemberInfo memberInfo)
+            public void AddMember(MemberInfo memberInfo, int declaredAt)
             {
-                members.Add(memberInfo);
+                members.Add((memberInfo, declaredAt));
             }
 
-            public IEnumerable<GroupNode> DescendantsAndSelf()
+            public void NotifyDeclaredAt(int declaredAt)
             {
-                yield return this;
-                foreach (var item in Descendants(children)) yield return item;
+                DeclaredAt = Math.Min(DeclaredAt, declaredAt);
             }
 
-            static IEnumerable<GroupNode> Descendants(IEnumerable<GroupNode> source)
+            public void RegisterOrder(PropertyGroupAttribute attribute)
             {
-                foreach (var item in source)
+                if (!attribute.HasDefinedOrder) return;
+
+                Order = hasDefinedOrder ? Math.Min(Order, attribute.Order) : attribute.Order;
+                hasDefinedOrder = true;
+            }
+
+            public void SortChildrenRecursive()
+            {
+                var sorted = children
+                    .OrderBy(x => x.Order)
+                    .ThenBy(x => x.DeclaredAt)
+                    .ToList();
+
+                children.Clear();
+                children.AddRange(sorted);
+
+                foreach (var child in children)
                 {
-                    yield return item;
-                    var e = Descendants(item.children).GetEnumerator();
-                    while (e.MoveNext())
-                    {
-                        yield return e.Current;
-                    }
+                    child.SortChildrenRecursive();
                 }
             }
+        }
+
+        readonly struct SiblingItem
+        {
+            public SiblingItem(int order, int declaredAt, MemberInfo member)
+            {
+                Order = order;
+                DeclaredAt = declaredAt;
+                Member = member;
+                Group = null;
+            }
+
+            public SiblingItem(int order, int declaredAt, GroupNode group)
+            {
+                Order = order;
+                DeclaredAt = declaredAt;
+                Member = null;
+                Group = group;
+            }
+
+            public int Order { get; }
+            public int DeclaredAt { get; }
+            public MemberInfo Member { get; }
+            public GroupNode Group { get; }
         }
 
         public static void BuildElements(SerializedObject serializedObject, VisualElement rootElement, object target, Func<string, SerializedProperty> findPropertyFunc)
         {
             if (target == null) return;
 
-            // Build node
             var rootNode = BuildInspectorNode(target.GetType());
+            rootNode.VisualElement = rootElement;
+            BuildNodeElements(rootNode, serializedObject, target, findPropertyFunc);
+        }
 
-            // Add elements
-            foreach (var node in rootNode.DescendantsAndSelf())
+        static void BuildNodeElements(
+            GroupNode node,
+            SerializedObject serializedObject,
+            object target,
+            Func<string, SerializedProperty> findPropertyFunc)
+        {
+            foreach (var item in EnumerateOrderedSiblings(node))
             {
-                // Get or create group element
-                if (node.Parent == null)
+                if (item.Group != null)
                 {
-                    node.VisualElement = rootElement;
-                }
-                else if (node.Drawer == null)
-                {
-                    node.VisualElement = node.Parent.VisualElement;
-                }
-                else
-                {
-                    node.VisualElement = node.Drawer.CreateRootElement(node.Name);
-                    node.Parent.VisualElement.Add(node.VisualElement);
-                }
-
-                // Add member elements
-                foreach (var member in node.Members.OrderByAttributeThenByMemberType())
-                {
-                    // Exclude if member has HideInInspector attribute
-                    // but not "m_SerializedDataModeController" on EditorWindow
-                    // (Unity added HideInInspector here in 2022.3.23f1)
-                    if (member.HasCustomAttribute<HideInInspector>() && member.Name != "m_SerializedDataModeController") 
-                        continue;
-
-                    // Add default PropertyField if member has DisableAlchemyEditorAttribute
-                    if (member.GetCustomAttribute<DisableAlchemyEditorAttribute>() != null)
+                    var child = item.Group;
+                    if (child.Drawer == null)
                     {
-                        var p = findPropertyFunc(member.Name);
-                        if (p != null)
-                        {
-                            var propertyField = new PropertyField(p);
-                            propertyField.style.width = Length.Percent(100f);
-                            node.VisualElement.Add(propertyField);
-                        }
-                        continue;
-                    }
-
-                    VisualElement element = null;
-                    var property = findPropertyFunc(member.Name);
-                    var isManagedReferenceProperty = property?.propertyType == SerializedPropertyType.ManagedReference;
-                    var drawerType = member switch
-                    {
-                        FieldInfo fieldInfo => InternalAPIHelper.GetDrawerTypeForType(fieldInfo.FieldType, isManagedReferenceProperty),
-                        PropertyInfo propertyInfo => InternalAPIHelper.GetDrawerTypeForType(propertyInfo.PropertyType, isManagedReferenceProperty),
-                        _ => null
-                    };
-
-                    // Add default PropertyField if the property has a custom PropertyDrawer, except for IMGUI drawers overriding OnGUI
-                    if (drawerType != null && ReflectionHelper.GetMembers(drawerType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).All(x => x.Name != nameof(PropertyDrawer.OnGUI)))
-                    {
-                        if (property != null)
-                        {
-                            element = new PropertyField(property);
-                        }
+                        child.VisualElement = node.VisualElement;
                     }
                     else
                     {
-                        element = CreateMemberElement(serializedObject, target, member, findPropertyFunc);
+                        child.VisualElement = child.Drawer.CreateRootElement(child.Name);
+                        node.VisualElement.Add(child.VisualElement);
                     }
 
-                    if (element == null) continue;
-                    element.style.width = Length.Percent(100f);
+                    BuildNodeElements(child, serializedObject, target, findPropertyFunc);
+                    continue;
+                }
 
-                    var e = node.Drawer?.GetGroupElement(
-                        member.GetCustomAttributes<PropertyGroupAttribute>()
-                            .OrderByDescending(x => x.GroupPath.Split('/').Length)
-                            .FirstOrDefault()
-                    );
+                AddMemberElement(node, item.Member, serializedObject, target, findPropertyFunc);
+            }
+        }
 
-                    if (e == null) node.VisualElement.Add(element);
-                    else e.Add(element);
-                    AlchemyAttributeDrawer.ExecutePropertyDrawers(serializedObject, property, target, member, element);
+        static void AddMemberElement(
+            GroupNode node,
+            MemberInfo member,
+            SerializedObject serializedObject,
+            object target,
+            Func<string, SerializedProperty> findPropertyFunc)
+        {
+            // Exclude if member has HideInInspector attribute
+            // but not "m_SerializedDataModeController" on EditorWindow
+            // (Unity added HideInInspector here in 2022.3.23f1)
+            if (member.HasCustomAttribute<HideInInspector>() && member.Name != "m_SerializedDataModeController")
+                return;
+
+            // Add default PropertyField if member has DisableAlchemyEditorAttribute
+            if (member.GetCustomAttribute<DisableAlchemyEditorAttribute>() != null)
+            {
+                var p = findPropertyFunc(member.Name);
+                if (p != null)
+                {
+                    var propertyField = new PropertyField(p);
+                    propertyField.style.width = Length.Percent(100f);
+                    node.VisualElement.Add(propertyField);
+                }
+                return;
+            }
+
+            VisualElement element = null;
+            var property = findPropertyFunc(member.Name);
+            var isManagedReferenceProperty = property?.propertyType == SerializedPropertyType.ManagedReference;
+            var drawerType = member switch
+            {
+                FieldInfo fieldInfo => InternalAPIHelper.GetDrawerTypeForType(fieldInfo.FieldType, isManagedReferenceProperty),
+                PropertyInfo propertyInfo => InternalAPIHelper.GetDrawerTypeForType(propertyInfo.PropertyType, isManagedReferenceProperty),
+                _ => null
+            };
+
+            // Add default PropertyField if the property has a custom PropertyDrawer
+            if (drawerType != null && ReflectionHelper.GetMembers(drawerType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).All(x => x.Name != nameof(PropertyDrawer.OnGUI)))
+            {
+                if (property != null)
+                {
+                    element = new PropertyField(property);
                 }
             }
+            else
+            {
+                element = CreateMemberElement(serializedObject, target, member, findPropertyFunc);
+            }
+
+            if (element == null) return;
+            element.style.width = Length.Percent(100f);
+
+            var e = node.Drawer?.GetGroupElement(
+                member.GetCustomAttributes<PropertyGroupAttribute>()
+                    .OrderByDescending(x => x.GroupPath.Split('/').Length)
+                    .FirstOrDefault()
+            );
+
+            if (e == null) node.VisualElement.Add(element);
+            else e.Add(element);
+            AlchemyAttributeDrawer.ExecutePropertyDrawers(serializedObject, property, target, member, element);
+        }
+
+        internal static IReadOnlyList<string> GetOrderedSiblingNames(GroupNode node) =>
+            EnumerateOrderedSiblings(node)
+                .Where(x => x.Group != null || IsInspectorVisibleSiblingMember(x.Member))
+                .Select(x => x.Group?.Name ?? x.Member!.Name)
+                .ToArray();
+
+        internal static IEnumerable<(MemberInfo Member, GroupNode Group)> GetOrderedSiblings(GroupNode node) =>
+            EnumerateOrderedSiblings(node)
+                .Select(x => (x.Member, x.Group));
+
+        static IEnumerable<SiblingItem> EnumerateOrderedSiblings(GroupNode node)
+        {
+            // Ordering only — visibility is decided later by AddMemberElement /
+            // CreateMemberElement (Inspector) or ReflectionField (ClassField).
+            var memberItems = node.MemberEntries
+                .Select(entry =>
+                    new SiblingItem(
+                        GetMemberOrder(entry.Member),
+                        entry.DeclaredAt,
+                        entry.Member));
+
+            var groupItems = node.Children.Select(child =>
+                new SiblingItem(child.Order, child.DeclaredAt, child));
+
+            return memberItems
+                .Concat(groupItems)
+                .OrderBy(x => x.Order)
+                .ThenBy(x => x.DeclaredAt);
+        }
+
+        // Narrowed visibility for inspector-order introspection (tests / sibling names).
+        // Not used by the build/render path — that must not drop AlchemySerializeField.
+        static bool IsInspectorVisibleSiblingMember(MemberInfo member)
+        {
+            if (member is MethodInfo methodInfo)
+            {
+                return methodInfo.HasCustomAttribute<ButtonAttribute>();
+            }
+
+            if (member.HasCustomAttribute<HideInInspector>() && member.Name != "m_SerializedDataModeController")
+            {
+                return false;
+            }
+
+            if (member.HasCustomAttribute<ShowInInspectorAttribute>())
+            {
+                return true;
+            }
+
+#if ALCHEMY_SUPPORT_SERIALIZATION
+            if (member.HasCustomAttribute<AlchemySerializeFieldAttribute>())
+            {
+                return true;
+            }
+#endif
+
+            if (member is FieldInfo fieldInfo)
+            {
+                return fieldInfo.IsPublic
+                    || fieldInfo.HasCustomAttribute<SerializeField>()
+                    || fieldInfo.HasCustomAttribute<SerializeReference>();
+            }
+
+            if (member is PropertyInfo propertyInfo)
+            {
+                return propertyInfo.HasCustomAttribute<SerializeField>();
+            }
+
+            return false;
+        }
+
+        static int GetMemberOrder(MemberInfo member)
+        {
+            var orderAttribute = member.GetCustomAttribute<OrderAttribute>();
+            return orderAttribute?.Order ?? 0;
         }
 
         internal static GroupNode BuildInspectorNode(Type targetType)
         {
             var rootNode = new GroupNode("Inspector-Group-Root", null);
 
-            // Get all members
-            var members = ReflectionHelper.GetMembers(targetType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, true)
-                .Where(x => x is MethodInfo or FieldInfo or PropertyInfo);
+            // Order members once, then assign sequential DeclaredAt (avoids int-packed ordinals).
+            var members = DeclarationOrderHelper.OrderMembers(
+                targetType,
+                ReflectionHelper.GetMembers(targetType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, true));
 
-            // Build member nodes
-            foreach (var member in members)
+            foreach (var (member, declaredAt) in members)
             {
                 var groupAttributes = member.GetCustomAttributes<PropertyGroupAttribute>(true);
                 if (groupAttributes.Count() == 0)
                 {
-                    rootNode.AddMember(member);
+                    rootNode.AddMember(member, declaredAt);
                     continue;
                 }
 
@@ -183,23 +322,35 @@ namespace Alchemy.Editor
                     .OrderBy(x => x.Item2.Length))
                 {
                     parentNode = rootNode;
-                    foreach (var groupName in hierarchy)
+                    for (var i = 0; i < hierarchy.Length; i++)
                     {
+                        var groupName = hierarchy[i];
                         var next = parentNode.Find(x => x.Name == groupName);
                         if (next == null)
                         {
-                            var drawer = AlchemyEditorUtility.CreateGroupDrawer(groupAttribute, targetType);
+                            var nodePath = string.Join("/", hierarchy.Take(i + 1));
+                            var drawer = AlchemyEditorUtility.CreateGroupDrawer(groupAttribute, targetType, nodePath);
                             next = new GroupNode(groupName, drawer);
                             parentNode.Add(next);
+                        }
+
+                        // Earliest declaring member wins for group placement among siblings.
+                        next.NotifyDeclaredAt(declaredAt);
+
+                        // Order on a group attribute applies to the leaf group of that path.
+                        if (i == hierarchy.Length - 1)
+                        {
+                            next.RegisterOrder(groupAttribute);
                         }
 
                         parentNode = next;
                     }
                 }
 
-                parentNode.AddMember(member);
+                parentNode.AddMember(member, declaredAt);
             }
 
+            rootNode.SortChildrenRecursive();
             return rootNode;
         }
 
@@ -250,7 +401,8 @@ namespace Alchemy.Editor
                             {
                                 declaredType = declaredType.GetGenericTypeDefinition();
                             }
-                            var dataName ="__alchemySerializationData_"+ declaredType.FullName.Replace("`","").Replace(".", "_") ;
+
+                            var dataName = "__alchemySerializationData_" + declaredType.FullName.Replace("`", "").Replace(".", "_");
                             var memberName = memberInfo.Name.EndsWith(">k__BackingField") ? memberInfo.Name[1..^16] : memberInfo.Name;
 
                             SerializedProperty GetProperty() => findPropertyFunc?.Invoke(dataName)
@@ -299,20 +451,5 @@ namespace Alchemy.Editor
             return null;
         }
 
-        internal static IOrderedEnumerable<MemberInfo> OrderByAttributeThenByMemberType(this IEnumerable<MemberInfo> members)
-        {
-            return members
-                .OrderBy(x =>
-                {
-                    var orderAttribute = x.GetCustomAttribute<OrderAttribute>();
-                    if (orderAttribute == null) return 0;
-                    return orderAttribute.Order;
-                })
-                .ThenBy(x =>
-                {
-                    if (x is MethodInfo) return 1;
-                    return 0;
-                });
-        }
     }
 }

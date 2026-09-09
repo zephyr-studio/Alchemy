@@ -1,9 +1,9 @@
 using System;
-using UnityEngine.Assertions;
-using UnityEngine.UIElements;
+using Alchemy.Inspector;
 using UnityEditor;
 using UnityEditor.UIElements;
-using Alchemy.Inspector;
+using UnityEngine.Assertions;
+using UnityEngine.UIElements;
 
 namespace Alchemy.Editor.Elements
 {
@@ -27,6 +27,8 @@ namespace Alchemy.Editor.Elements
             InternalAPIHelper.SetAcceptClicksIfDisabled(clickable, true);
 
             foldout.BindProperty(property);
+
+            inspectorContainer = new VisualElement();
 
             field = new ObjectField()
             {
@@ -52,6 +54,7 @@ namespace Alchemy.Editor.Elements
         }
 
         readonly Foldout foldout;
+        readonly VisualElement inspectorContainer;
         readonly ObjectField field;
         bool isNull;
 
@@ -89,6 +92,8 @@ namespace Alchemy.Editor.Elements
 
         void Build(SerializedProperty property)
         {
+            inspectorContainer.Unbind();
+            inspectorContainer.Clear();
             foldout.Clear();
             var toggle = foldout.Q<Toggle>();
 
@@ -98,12 +103,9 @@ namespace Alchemy.Editor.Elements
             {
                 foldout.Add(new VisualElement() { style = { height = EditorGUIUtility.standardVerticalSpacing } });
                 var so = new SerializedObject(property.objectReferenceValue);
-                InspectorHelper.BuildElements(so, foldout, so.targetObject, name => so.FindProperty(name));
-                this.Bind(so);
-            }
-            else
-            {
-                this.Unbind();
+                InspectorHelper.BuildElements(so, inspectorContainer, so.targetObject, name => so.FindProperty(name));
+                inspectorContainer.Bind(so);
+                foldout.Add(inspectorContainer);
             }
         }
     }

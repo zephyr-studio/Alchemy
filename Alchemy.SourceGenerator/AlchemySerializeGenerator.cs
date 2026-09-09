@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -118,9 +118,9 @@ namespace Alchemy.SourceGenerator
                 context.ReportDiagnostic(Diagnostic.Create(diagnosticDescriptor, Location.None, DiagnosticSeverity.Error));
             }
         }
-        static string ReplaceGenericsToCount( string typeName,int count)
+        static string ReplaceGenericsToCount(string typeName, int count)
         {
-            if(count == 0) return typeName;
+            if (count == 0) return typeName;
             var builder = new StringBuilder();
             bool skip = false;
             foreach (var c in typeName)
@@ -168,14 +168,14 @@ namespace Alchemy.SourceGenerator
             if (typeSymbol.IsGenericType)
             {
                 genericsCount = typeSymbol.TypeParameters.Length;
-                
+
             }
             var typeGenerics = typeSymbol.IsGenericType
                 ? "<" + string.Join(", ", typeSymbol.TypeParameters.Select(x => x.Name)) + ">"
                 : "";
             var displayName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", "");
             var alchemySerializationDataName = displayName.Replace(".", "_");
-            alchemySerializationDataName ="__alchemySerializationData_"+ ReplaceGenericsToCount(alchemySerializationDataName,genericsCount) ;
+            alchemySerializationDataName = "__alchemySerializationData_" + ReplaceGenericsToCount(alchemySerializationDataName, genericsCount);
 
             var inheritedOnBeforeSerialize = hasInheritedImplementation
                 ? "base.__AlchemyOnBeforeSerialize();"
@@ -192,7 +192,7 @@ namespace Alchemy.SourceGenerator
             var serializationDataAttributesCode = hasShowSerializationData
                 ? $"[global::Alchemy.Inspector.LabelText(\"Alchemy Serialization Data ({displayName})\"),global::Alchemy.Inspector.ReadOnly, global::UnityEngine.TextArea(3, 999), global::UnityEngine.SerializeField]"
                 : "[global::UnityEngine.HideInInspector, global::UnityEngine.SerializeField]";
-            
+
             // target class namespace
             var ns = typeSymbol.ContainingNamespace.IsGlobalNamespace
                 ? string.Empty
@@ -217,7 +217,7 @@ catch (global::System.Exception ex)
 {{
     if ({alchemySerializationDataName}.{fieldName}.isCreated)
     {{
-        this.{fieldName} = global::Alchemy.Serialization.Internal.SerializationHelper.FromJson<{field.Type.ToDisplayString()}>({alchemySerializationDataName}.{fieldName}.data, {alchemySerializationDataName}.UnityObjectReferences);
+        this.{fieldName} = global::Alchemy.Serialization.Internal.SerializationHelper.FromJson<{field.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}>({alchemySerializationDataName}.{fieldName}.data, {alchemySerializationDataName}.UnityObjectReferences);
     }}
 }}
 catch (global::System.Exception ex)

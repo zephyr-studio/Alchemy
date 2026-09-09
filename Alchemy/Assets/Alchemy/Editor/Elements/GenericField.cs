@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Globalization;
 using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine;
@@ -16,7 +17,7 @@ namespace Alchemy.Editor.Elements
     {
         const string CreateButtonText = "Create...";
 
-        public GenericField(object obj, Type type, string label,bool isDelayed = false)
+        public GenericField(object obj, Type type, string label, bool isDelayed = false)
         {
             Build(obj, type, label, isDelayed);
             GUIHelper.ScheduleAdjustLabelWidth(this);
@@ -67,6 +68,18 @@ namespace Alchemy.Editor.Elements
                         text = CreateButtonText
                     });
                 }
+                else if (type.IsArray && type.GetArrayRank() == 1)
+                {
+                    nullLabelElement.Add(new Button(() =>
+                    {
+                        var instance = Array.CreateInstance(type.GetElementType(), 0);
+                        Build(instance, type, label, isDelayed);
+                        OnValueChanged?.Invoke(instance);
+                    })
+                    {
+                        text = CreateButtonText
+                    });
+                }
                 else if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>)) // nullable
                 {
                     nullLabelElement.Add(new Button(() =>
@@ -107,7 +120,23 @@ namespace Alchemy.Editor.Elements
             {
                 AddField(new IntegerField(label), (int)obj);
             }
-            
+            else if (type == typeof(sbyte))
+            {
+                AddSmallIntegerField(label, (sbyte)obj, sbyte.MinValue, sbyte.MaxValue, x => (sbyte)x);
+            }
+            else if (type == typeof(byte))
+            {
+                AddSmallIntegerField(label, (byte)obj, byte.MinValue, byte.MaxValue, x => (byte)x);
+            }
+            else if (type == typeof(short))
+            {
+                AddSmallIntegerField(label, (short)obj, short.MinValue, short.MaxValue, x => (short)x);
+            }
+            else if (type == typeof(ushort))
+            {
+                AddSmallIntegerField(label, (ushort)obj, ushort.MinValue, ushort.MaxValue, x => (ushort)x);
+            }
+
             else if (type == typeof(uint))
             {
 #if UNITY_2022_1_OR_NEWER
@@ -125,7 +154,7 @@ namespace Alchemy.Editor.Elements
                 
                 Add(control);
 #endif
-                
+
             }
             else if (type == typeof(long))
             {
@@ -153,9 +182,13 @@ namespace Alchemy.Editor.Elements
             {
                 AddField(new FloatField(label), (float)obj);
             }
-            else if (type == typeof(double) || type == typeof(decimal))
+            else if (type == typeof(double))
             {
                 AddField(new DoubleField(label), (double)obj);
+            }
+            else if (type == typeof(decimal))
+            {
+                AddDecimalField(label, (decimal)obj);
             }
             else if (type == typeof(string))
             {
@@ -184,8 +217,12 @@ namespace Alchemy.Editor.Elements
             }
             else if (type == typeof(char))
             {
-                var charField = new TextField(label, 1, false, false, default) { value = obj.ToString() };
-                charField.RegisterValueChangedCallback(x => OnValueChanged?.Invoke(x.newValue[0]));
+                var charField = new TextField(label, 1, false, false, default) { value = ((char)obj).ToString() };
+                charField.RegisterValueChangedCallback(x =>
+                {
+                    if (string.IsNullOrEmpty(x.newValue)) return;
+                    OnValueChanged?.Invoke(x.newValue[0]);
+                });
                 Add(charField);
             }
             else if (type.IsEnum)
@@ -285,6 +322,90 @@ namespace Alchemy.Editor.Elements
         bool isDelayed;
         bool changed;
         MemberInfo memberInfo;
+
+        void AddSmallIntegerField<T>(string label, int value, int minValue, int maxValue, Func<int, T> convert)
+        {
+            var control = new IntegerField(label) { value = value };
+            control.RegisterValueChangedCallback(x =>
+            {
+                var newValue = Math.Clamp(x.newValue, minValue, maxValue);
+                control.SetValueWithoutNotify(newValue);
+                if (isDelayed)
+                {
+                    changed = true;
+                }
+                else
+                {
+                    OnValueChanged?.Invoke(convert(newValue));
+                }
+            });
+            if (isDelayed)
+            {
+                control.RegisterCallback<FocusOutEvent>(_ =>
+                {
+                    if (!changed) return;
+                    OnValueChanged?.Invoke(convert(control.value));
+                    changed = false;
+                });
+            }
+            Add(control);
+        }
+
+        void AddDecimalField(string label, decimal value)
+        {
+            var committedValue = value;
+            var control = new TextField(label)
+            {
+                value = value.ToString(CultureInfo.InvariantCulture)
+            };
+            control.RegisterValueChangedCallback(x =>
+            {
+                if (!decimal.TryParse(
+                    x.newValue,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out var parsed))
+                {
+                    return;
+                }
+
+                if (isDelayed)
+                {
+                    changed = true;
+                }
+                else
+                {
+                    committedValue = parsed;
+                    OnValueChanged?.Invoke(parsed);
+                }
+            });
+            control.RegisterCallback<FocusOutEvent>(_ =>
+            {
+                if (decimal.TryParse(
+                    control.value,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out var parsed))
+                {
+                    if (isDelayed && changed)
+                    {
+                        committedValue = parsed;
+                        OnValueChanged?.Invoke(parsed);
+                    }
+
+                    control.SetValueWithoutNotify(
+                        parsed.ToString(CultureInfo.InvariantCulture));
+                }
+                else
+                {
+                    control.SetValueWithoutNotify(
+                        committedValue.ToString(CultureInfo.InvariantCulture));
+                }
+
+                changed = false;
+            });
+            Add(control);
+        }
 
         void AddField<T>(BaseField<T> control, T value)
         {

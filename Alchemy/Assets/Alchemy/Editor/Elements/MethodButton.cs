@@ -81,12 +81,15 @@ namespace Alchemy.Editor.Elements
         readonly Foldout foldout;
         readonly Button button;
 
-        public void SetLabelText(string labelText) {
+        public void SetLabelText(string labelText)
+        {
             var foldout = this.Q<Foldout>();
-            if (foldout != null) {
+            if (foldout != null)
+            {
                 foldout.text = labelText;
             }
-            else {
+            else
+            {
                 this.Q<Button>().text = labelText;
             }
         }

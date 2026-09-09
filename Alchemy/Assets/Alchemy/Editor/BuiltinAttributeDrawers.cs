@@ -1,10 +1,11 @@
+using System;
 using System.Linq;
-using UnityEngine;
-using UnityEngine.UIElements;
+using Alchemy.Editor.Elements;
+using Alchemy.Inspector;
 using UnityEditor;
 using UnityEditor.UIElements;
-using Alchemy.Inspector;
-using Alchemy.Editor.Elements;
+using UnityEngine;
+using UnityEngine.UIElements;
 
 namespace Alchemy.Editor.Drawers
 {
@@ -109,7 +110,7 @@ namespace Alchemy.Editor.Drawers
                 default:
                     var labelElement = TargetElement.Q<Label>();
                     if (labelElement == null) return;
-                    labelElement.text = labelElement.text;
+                    labelElement.text = labelTextAttribute.Text;
                     break;
             }
         }
@@ -180,6 +181,145 @@ namespace Alchemy.Editor.Drawers
         }
     }
 
+    [CustomAttributeDrawer(typeof(ChildObjectsOnlyAttribute))]
+    public sealed class ChildObjectsOnlyDrawer : ObjectReferenceValidationDrawer
+    {
+        protected override string UnsupportedMessage =>
+            "ChildObjectsOnly can only be used on GameObject, Component, or UnityEngine.Object references, including arrays and lists of those types, when the Inspector target is a Component or GameObject.";
+
+        protected override bool IsSupportedProperty() =>
+            ChildObjectsOnlyValidation.GetOwnerTransform(SerializedObject) != null &&
+            ChildObjectsOnlyValidation.IsSupportedProperty(SerializedProperty);
+
+        protected override string GetErrorMessage()
+        {
+            var attribute = (ChildObjectsOnlyAttribute)Attribute;
+            return attribute.Message ?? ChildObjectsOnlyValidation.DefaultErrorMessage(
+                SerializedProperty.displayName, attribute.IncludeSelf);
+        }
+
+        protected override bool IsPropertyValid() =>
+            ChildObjectsOnlyValidation.IsSerializedPropertyValid(
+                SerializedProperty, ((ChildObjectsOnlyAttribute)Attribute).IncludeSelf);
+    }
+
+    [CustomAttributeDrawer(typeof(SceneObjectsOnlyAttribute))]
+    public sealed class SceneObjectsOnlyDrawer : ObjectReferenceValidationDrawer
+    {
+        protected override string UnsupportedMessage =>
+            "SceneObjectsOnly can only be used on UnityEngine.Object references, including arrays and lists of those types.";
+
+        protected override bool IsSupportedProperty() =>
+            SceneObjectsOnlyValidation.IsSupportedProperty(SerializedProperty);
+
+        protected override string GetErrorMessage() =>
+            ((SceneObjectsOnlyAttribute)Attribute).Message ??
+            SceneObjectsOnlyValidation.DefaultErrorMessage(SerializedProperty.displayName);
+
+        protected override bool IsPropertyValid() =>
+            SceneObjectsOnlyValidation.IsSerializedPropertyValid(SerializedProperty);
+    }
+
+    public abstract class ObjectReferenceValidationDrawer : TrackSerializedObjectAttributeDrawer
+    {
+        protected abstract string UnsupportedMessage { get; }
+        protected abstract bool IsSupportedProperty();
+        protected abstract string GetErrorMessage();
+        protected abstract bool IsPropertyValid();
+
+        HelpBox helpBox;
+        bool subscribed;
+
+        public override void OnCreateElement()
+        {
+            if (SerializedProperty == null) return;
+
+            if (!IsSupportedProperty())
+            {
+                helpBox = new HelpBox(UnsupportedMessage, HelpBoxMessageType.Warning);
+                InsertHelpBox();
+                return;
+            }
+
+            helpBox = new HelpBox(GetErrorMessage(), HelpBoxMessageType.Error);
+            InsertHelpBox();
+
+            TargetElement.RegisterCallback<AttachToPanelEvent>(OnAttachToPanel);
+            TargetElement.RegisterCallback<DetachFromPanelEvent>(OnDetachFromPanel);
+            if (TargetElement.panel != null)
+            {
+                Subscribe();
+            }
+
+            TargetElement.TrackPropertyValue(SerializedProperty, _ => OnInspectorChanged());
+            base.OnCreateElement();
+        }
+
+        protected override void OnInspectorChanged()
+        {
+            if (helpBox == null) return;
+            if (!SerializedObjectReferenceValidation.TryAccessProperty(SerializedProperty, out _, out _))
+            {
+                return;
+            }
+
+            var valid = IsPropertyValid();
+            helpBox.style.display = valid ? DisplayStyle.None : DisplayStyle.Flex;
+        }
+
+        void InsertHelpBox()
+        {
+            var parent = TargetElement.parent;
+            parent.Insert(parent.IndexOf(TargetElement), helpBox);
+        }
+
+        void OnAttachToPanel(AttachToPanelEvent evt)
+        {
+            Subscribe();
+            OnInspectorChanged();
+        }
+
+        void OnDetachFromPanel(DetachFromPanelEvent evt) => Unsubscribe();
+
+        void OnExternalChange()
+        {
+            if (!SerializedObjectReferenceValidation.TryAccessProperty(SerializedProperty, out var serializedObject, out _))
+            {
+                return;
+            }
+
+            try
+            {
+                if (!serializedObject.hasModifiedProperties)
+                {
+                    serializedObject.UpdateIfRequiredOrScript();
+                }
+            }
+            catch (Exception)
+            {
+                return;
+            }
+
+            OnInspectorChanged();
+        }
+
+        void Subscribe()
+        {
+            if (subscribed) return;
+            EditorApplication.hierarchyChanged += OnExternalChange;
+            Undo.undoRedoPerformed += OnExternalChange;
+            subscribed = true;
+        }
+
+        void Unsubscribe()
+        {
+            if (!subscribed) return;
+            EditorApplication.hierarchyChanged -= OnExternalChange;
+            Undo.undoRedoPerformed -= OnExternalChange;
+            subscribed = false;
+        }
+    }
+
     [CustomAttributeDrawer(typeof(RequiredAttribute))]
     public sealed class RequiredDrawer : TrackSerializedObjectAttributeDrawer
     {
@@ -187,7 +327,7 @@ namespace Alchemy.Editor.Drawers
 
         public override void OnCreateElement()
         {
-            if (SerializedProperty.propertyType != SerializedPropertyType.ObjectReference) return;
+            if (SerializedProperty == null || SerializedProperty.propertyType != SerializedPropertyType.ObjectReference) return;
 
             var message = ((RequiredAttribute)Attribute).Message ?? ObjectNames.NicifyVariableName(SerializedProperty.displayName) + " is required.";
             helpBox = new HelpBox(message, HelpBoxMessageType.Error);
@@ -204,6 +344,102 @@ namespace Alchemy.Editor.Drawers
         }
     }
 
+    [CustomAttributeDrawer(typeof(RequiredListLengthAttribute))]
+    public sealed class RequiredListLengthDrawer : TrackSerializedObjectAttributeDrawer
+    {
+        HelpBox helpBox;
+
+        public override void OnCreateElement()
+        {
+            if (SerializedProperty == null) return;
+
+            var attribute = (RequiredListLengthAttribute)Attribute;
+            if (!attribute.Min.HasValue && !attribute.Max.HasValue)
+            {
+                helpBox = new HelpBox(
+                    RequiredListLengthValidation.InvalidBoundsMessage,
+                    HelpBoxMessageType.Warning);
+                InsertHelpBox();
+                return;
+            }
+
+            if (!RequiredListLengthValidation.IsSupportedProperty(SerializedProperty))
+            {
+                helpBox = new HelpBox(
+                    RequiredListLengthValidation.UnsupportedMessage,
+                    HelpBoxMessageType.Warning);
+                InsertHelpBox();
+                return;
+            }
+
+            helpBox = new HelpBox(
+                attribute.Message ?? RequiredListLengthValidation.DefaultMessage(
+                    SerializedProperty.displayName,
+                    attribute.Min,
+                    attribute.Max),
+                HelpBoxMessageType.Error);
+            InsertHelpBox();
+            TargetElement.TrackPropertyValue(SerializedProperty, _ => OnInspectorChanged());
+            base.OnCreateElement();
+        }
+
+        protected override void OnInspectorChanged()
+        {
+            if (helpBox == null) return;
+            if (!SerializedObjectReferenceValidation.TryAccessProperty(SerializedProperty, out _, out _))
+            {
+                return;
+            }
+
+            var attribute = (RequiredListLengthAttribute)Attribute;
+            var valid = RequiredListLengthValidation.IsSerializedPropertyValid(
+                SerializedProperty,
+                attribute.Min,
+                attribute.Max);
+            helpBox.style.display = valid ? DisplayStyle.None : DisplayStyle.Flex;
+        }
+
+        void InsertHelpBox()
+        {
+            var parent = TargetElement.parent;
+            parent.Insert(parent.IndexOf(TargetElement), helpBox);
+        }
+    }
+
+    [CustomAttributeDrawer(typeof(RequiredInAttribute))]
+    public sealed class RequiredInDrawer : TrackSerializedObjectAttributeDrawer
+    {
+        HelpBox helpBox;
+
+        public override void OnCreateElement()
+        {
+            if (SerializedProperty == null || SerializedProperty.propertyType != SerializedPropertyType.ObjectReference) return;
+
+            var attribute = (RequiredInAttribute)Attribute;
+            var message = attribute.Message ?? ObjectNames.NicifyVariableName(SerializedProperty.displayName) + " is required.";
+            helpBox = new HelpBox(message, HelpBoxMessageType.Error);
+
+            var parent = TargetElement.parent;
+            parent.Insert(parent.IndexOf(TargetElement), helpBox);
+
+            base.OnCreateElement();
+        }
+
+        protected override void OnInspectorChanged()
+        {
+            var attribute = (RequiredInAttribute)Attribute;
+            var valid = SerializedObjectReferenceValidation.IsSerializedPropertyValid(
+                SerializedProperty,
+                target =>
+                {
+                    var isRequired = (attribute.PrefabKind & PrefabKindUtility.GetPrefabKind(target)) != 0;
+                    return value => !isRequired || value != null;
+                });
+
+            helpBox.style.display = valid ? DisplayStyle.None : DisplayStyle.Flex;
+        }
+    }
+
     [CustomAttributeDrawer(typeof(ValidateInputAttribute))]
     public sealed class ValidateInputDrawer : TrackSerializedObjectAttributeDrawer
     {
@@ -211,6 +447,8 @@ namespace Alchemy.Editor.Drawers
 
         public override void OnCreateElement()
         {
+            if (SerializedProperty == null) return;
+
             var message = ((ValidateInputAttribute)Attribute).Message ?? ObjectNames.NicifyVariableName(SerializedProperty.displayName) + " is not valid.";
             helpBox = new HelpBox(message, HelpBoxMessageType.Error);
 
@@ -246,6 +484,7 @@ namespace Alchemy.Editor.Drawers
     public sealed class PreviewDrawer : TrackSerializedObjectAttributeDrawer
     {
         private Image image;
+        private PreviewImageUpdater previewUpdater;
         private const float BorderWidth = 1f;
         private static readonly Color borderColor = new Color(0f, 0f, 0f, 0.3f);
 
@@ -285,23 +524,14 @@ namespace Alchemy.Editor.Drawers
 
             var parent = TargetElement.parent;
             parent.Insert(parent.IndexOf(TargetElement) + 1, image);
+            previewUpdater = new PreviewImageUpdater(TargetElement, image);
 
             base.OnCreateElement();
         }
 
         protected override void OnInspectorChanged()
         {
-            if (SerializedProperty.objectReferenceValue == null)
-            {
-                image.image = null;
-                return;
-            }
-
-            TargetElement.schedule.Execute(() =>
-            {
-                var texture = AssetPreview.GetAssetPreview(SerializedProperty.objectReferenceValue);
-                image.image = texture;
-            }).Until(() => image.image != null);
+            previewUpdater?.Update(SerializedProperty.objectReferenceValue);
         }
     }
 
